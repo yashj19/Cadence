@@ -2,16 +2,17 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"strings"
+
+	"cadence/commands"
+	"cadence/parser"
 )
 
-// Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
-var _ = net.Listen
-var _ = os.Exit
-
 func main() {
-	fmt.Println("Logs from your program will appear here!")
+	fmt.Println("Starting server...")
 	
 	// bind to port 6379 to listen for incoming TCP connections
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
@@ -24,12 +25,14 @@ func main() {
 	defer l.Close()
 
 	// wait for an incoming TCP connection
-	c, err := l.Accept()
-	if err != nil {
-		fmt.Println("Error accepting connection: ", err.Error())
-		os.Exit(1)
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			fmt.Println("Error accepting connection: ", err.Error())
+			os.Exit(1)
+		}
+		go handleConnection(c)
 	}
-	handleConnection(c)
 }
 
 
@@ -38,15 +41,35 @@ func handleConnection(conn net.Conn) {
 	fmt.Println("Client connected:", conn.RemoteAddr())
 
 	// create a buffer of bytes to read the input into
-	buffer := make([]byte, 128)
-	_,err := conn.Read(buffer)
+	buffer := make([]byte, 1024)
+	for {
+		// read from connection
+		_,err := conn.Read(buffer)
+		if err != nil {
+			if err == io.EOF {
+				fmt.Println("Closing connection...")
+			} else {
+				fmt.Println("Error reading from connection:", conn.RemoteAddr())
+			}
+			return
+		}
 
-	if err != nil {
-		fmt.Println("Error reading from connection:", conn.RemoteAddr())
-		return
+		// get deserialized commands + args
+		parts := parser.RESPDeserialize(string(buffer))
+		fmt.Println(parts)
+
+		// decide action to take based on first (should be command)
+		if(len(parts) == 0) {
+			fmt.Println("No commands passed - nothing to do")
+		} else {
+			command := strings.ToLower(parts[0])
+			cmdFunc, exists := commands.CmdMap[command]
+			if exists {
+				fmt.Println("Executing command:", command)
+				cmdFunc(conn, parts[1:])
+			} else {
+				fmt.Println("Unknown command passed:", command)
+			}
+		}
 	}
-
-	fmt.Printf("Received: %s", buffer)
-	conn.Write([]byte("+PONG\r\n"))
-
 }
