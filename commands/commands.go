@@ -17,12 +17,12 @@ var CmdMap = map[string]func(net.Conn, []string){
 	"set":  set,
 }
 
-// Entry struct {
-// 	value any
-// 	expiryTime time.TIME
-// }
+type Entry struct {
+	value string
+	expiryTime time.Time
+}
 
-var simpleMap = make(map[string]string)
+var cache = make(map[string]Entry)
 
 func invalidArgs() {
 	fmt.Println("Invalid number of arguments passed");
@@ -46,44 +46,31 @@ func get(conn net.Conn, args []string) {
 		invalidArgs()
 		return
 	}
-	value, exists := simpleMap[args[0]]
-	if exists {
-		conn.Write(parser.BulkStringSerialize(value))
+	entry, exists := cache[args[0]]
+	if exists && (entry.expiryTime.IsZero() || time.Now().Before(entry.expiryTime)) {
+		conn.Write(parser.BulkStringSerialize(entry.value))
 	} else {
+		delete(cache, args[0])
 		conn.Write(parser.NilBulkString())
 	}
 }
 
 func set(conn net.Conn, args []string) {
 	var n = len(args)
-	if n < 2 {
+
+	if n == 2 {
+		cache[args[0]] = Entry{value: args[1]}
+	} else if n == 4 && strings.ToLower(args[2]) == "px" {
+		num, err := strconv.Atoi(args[3])
+		if err != nil {
+			fmt.Println("YOU DIDNT GIVE ME A NUMBER FOR EXPIRATION TIME")
+			return
+		}
+		cache[args[0]] = Entry{value: args[1], expiryTime: time.Now().Add(time.Duration(num) * time.Millisecond)}
+	} else {
 		invalidArgs()
 		return
 	}
-	simpleMap[args[0]] = args[1] 
-
-	// if expiry also set, handle that
-	if n > 2 {
-		if strings.ToLower(args[2]) == "px" {
-			if n < 4 {
-				invalidArgs()
-				return
-			}
-
-			num, err := strconv.Atoi(args[3])
-			if err != nil {
-				fmt.Println("YOU DIDNT GIVE ME A NUMBER FOR EXPIRATION TIME")
-				return
-			}
-
-			go expireKey(args[0], num);
-		}
-	}
 
 	conn.Write(parser.SimpleStringSerialize("OK"))
-}
-
-func expireKey(key string, millis int) {
-	time.Sleep(time.Duration(millis) * time.Millisecond)
-	delete(simpleMap, key)
 }
