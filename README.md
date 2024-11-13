@@ -3,7 +3,6 @@ An implementation of a caching database in Go. This supports replication with ma
 
 ### Technical Specs:
 - Server is a TCP server.
-- Cache is an LRU cache.
 - Serialization protocol is a variant of the Redis Serialization Protocol (RESP).
   
 ### How to use:
