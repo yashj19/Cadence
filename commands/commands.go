@@ -202,3 +202,9 @@ func (inst Instruction) Run(conn net.Conn) {
 		}
 	}
 }
+
+// like constructor for instruction struct
+func NewInstruction(rawCommand string) Instruction {
+	parts := strings.Split(rawCommand, " ")
+	return Instruction{Command: parts[0], Args: parts[1:]}
+}
