@@ -44,8 +44,10 @@ FULLSYNC rdb_file - RDB file encoded as bulk string
 Note: anything in brackets means its optional.
 */
 
+//TODO: each conn.Write can return error, handle it
+
 // defined an explicit struct so the command names can easily be changed to make it more customizable
-var commands = struct {
+var Commands = struct {
 	STATUS       string
 	INFO         string
 	ECHO         string
@@ -67,16 +69,24 @@ var commands = struct {
 	FULL_SYNC:    "FULLSYNC",
 }
 
+var Responses = struct {
+	ALL_GOOD string
+	OKAY     string
+}{
+	ALL_GOOD: "PONG",
+	OKAY:     "OK",
+}
+
 // list of commands to propagate to replicas
-var commandsToPropagate = []string{commands.SET}
+var commandsToPropagate = []string{Commands.SET}
 
 // map of commands to validation functions
 var cmdValidate = map[string]func(args []string) bool{
-	commands.STATUS: func(args []string) bool { return len(args) == 0 },
-	commands.INFO:   func(args []string) bool { return len(args) == 0 },
-	commands.ECHO:   func(args []string) bool { return len(args) > 0 },
-	commands.GET:    func(args []string) bool { return len(args) == 1 },
-	commands.SET: func(args []string) bool {
+	Commands.STATUS: func(args []string) bool { return len(args) == 0 },
+	Commands.INFO:   func(args []string) bool { return len(args) == 0 },
+	Commands.ECHO:   func(args []string) bool { return len(args) > 0 },
+	Commands.GET:    func(args []string) bool { return len(args) == 1 },
+	Commands.SET: func(args []string) bool {
 		if len(args) < 2 {
 			return false
 		}
@@ -92,10 +102,10 @@ var cmdValidate = map[string]func(args []string) bool{
 			return false
 		}
 	},
-	commands.REPLICA_SYNC: func(args []string) bool {
+	Commands.REPLICA_SYNC: func(args []string) bool {
 		return len(args) == 0
 	},
-	commands.FULL_SYNC: func(args []string) bool {
+	Commands.FULL_SYNC: func(args []string) bool {
 		//TODO: type should be a file
 		return len(args) == 1
 	},
@@ -103,20 +113,20 @@ var cmdValidate = map[string]func(args []string) bool{
 
 // TODO: upon replica contact, save its host and port info (to try connecting again in the cdase of an error)
 var cmdRun = map[string]func(net.Conn, []string){
-	commands.STATUS: func(conn net.Conn, args []string) {
+	Commands.STATUS: func(conn net.Conn, args []string) {
 		conn.Write(parser.SimpleStringSerialize("PONG"))
 	},
-	commands.INFO: func(conn net.Conn, args []string) {
+	Commands.INFO: func(conn net.Conn, args []string) {
 		if shared.ServerInfo.IsReplica {
 			conn.Write(parser.BulkStringSerialize("role:slave")) //\nmaster_replid:" + replID + "\nmaster_repl_offset:" + strconv.Itoa(repOffset) + "\n"))
 		} else {
 			conn.Write(parser.BulkStringSerialize("role:master"))
 		}
 	},
-	commands.ECHO: func(conn net.Conn, args []string) {
+	Commands.ECHO: func(conn net.Conn, args []string) {
 		conn.Write(parser.BulkStringSerialize(strings.Join(args, " ")))
 	},
-	commands.GET: func(conn net.Conn, args []string) {
+	Commands.GET: func(conn net.Conn, args []string) {
 		entry, exists := cache[args[0]]
 		if exists && (entry.expiryTime.IsZero() || time.Now().Before(entry.expiryTime)) {
 			conn.Write(parser.BulkStringSerialize(entry.value))
@@ -125,7 +135,7 @@ var cmdRun = map[string]func(net.Conn, []string){
 			conn.Write(parser.NilBulkString())
 		}
 	},
-	commands.SET: func(conn net.Conn, args []string) {
+	Commands.SET: func(conn net.Conn, args []string) {
 		var n = len(args)
 
 		if n < 4 || args[len(args)-2] != "PX" {
@@ -143,7 +153,7 @@ var cmdRun = map[string]func(net.Conn, []string){
 			conn.Write(parser.SimpleStringSerialize("OK"))
 		}
 	},
-	commands.REPLICA_SYNC: func(conn net.Conn, args []string) {
+	Commands.REPLICA_SYNC: func(conn net.Conn, args []string) {
 		// REPLICA handshake is going to only be simple handshake - replica sends ask to sync with port, master replies with RDB file (full resync)
 		host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 		if err != nil {
@@ -153,7 +163,7 @@ var cmdRun = map[string]func(net.Conn, []string){
 			conn.Write(parser.BulkStringArraySerialize([]string{"FULLSYNC", "file"}))
 		}
 	},
-	commands.FULL_SYNC: func(conn net.Conn, args []string) {
+	Commands.FULL_SYNC: func(conn net.Conn, args []string) {
 		// REPLICA handshake is going to only be simple handshake - replica sends ask to sync with port, master replies with RDB file
 		// get the port, do something with it (store it)
 		// return back full resync
@@ -204,7 +214,6 @@ func (inst Instruction) Run(conn net.Conn) {
 }
 
 // like constructor for instruction struct
-func NewInstruction(rawCommand string) Instruction {
-	parts := strings.Split(rawCommand, " ")
-	return Instruction{Command: parts[0], Args: parts[1:]}
+func NewInstruction(rawParts []string) Instruction {
+	return Instruction{Command: rawParts[0], Args: rawParts[1:]}
 }
