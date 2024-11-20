@@ -6,23 +6,20 @@ import (
 )
 
 const (
-	DefaultPort = "6380"
+	DefaultPort          = "6380"
+	MaxInstructionBuffer = 5
 )
 
-var ServerInfo = struct {
+type ServerBasicInfo struct {
 	IsReplica     bool
-	MasterHost    string
-	MasterPort    string
+	MasterAddress string // empty string if not replica
 	Port          string
 	CurrentOffset int
-}{
-	IsReplica:     false,
-	MasterHost:    "",
-	MasterPort:    "",
-	Port:          DefaultPort,
-	CurrentOffset: 0,
 }
 
-func WriteToConn(conn net.Conn, message string) {
-	conn.Write(parser.BulkStringSerialize(message))
+var ServerInfo = ServerBasicInfo{}
+
+func WriteToConn(conn net.Conn, message string) error {
+	_, err := conn.Write(parser.BulkStringSerialize(message))
+	return err
 }
