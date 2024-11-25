@@ -138,7 +138,7 @@ var cmdRun = map[string]func(net.Conn, []string){
 	Commands.SET: func(conn net.Conn, args []string) {
 		var n = len(args)
 
-		if n < 4 || args[len(args)-2] != "PX" {
+		if n < 4 || strings.ToUpper(args[len(args)-2]) != "PX" {
 			cache[args[0]] = Entry{value: args[1]}
 		} else {
 			num, err := strconv.Atoi(args[3])
@@ -204,6 +204,7 @@ func (inst Instruction) Run(conn net.Conn) {
 				// write to connection, but if doesn't work retry (TODO)
 				replica.connection.Write(parser.BulkStringSerialize(inst.Command + " " + strings.Join(inst.Args, " ")))
 				/**
+				TODO:
 				when make instruction better (e.g. args actually store type information), make instruction
 				also store the original command passed, so don't have to reconstruct it (POF)
 				**/
@@ -213,7 +214,11 @@ func (inst Instruction) Run(conn net.Conn) {
 	}
 }
 
+func (inst Instruction) Print() {
+	fmt.Println(inst.Command + " " + strings.Join(inst.Args, " "))
+}
+
 // like constructor for instruction struct
 func NewInstruction(rawParts []string) Instruction {
-	return Instruction{Command: rawParts[0], Args: rawParts[1:]}
+	return Instruction{Command: strings.ToUpper(rawParts[0]), Args: rawParts[1:]}
 }
