@@ -5,6 +5,7 @@ import (
 	"cadence/commands"
 	"cadence/parser"
 	readutils "cadence/read-utils"
+	"cadence/shared"
 	"flag"
 	"fmt"
 	"net"
@@ -14,7 +15,7 @@ import (
 
 func main() {
 	// by default goes to local host port 6379
-	port := flag.String("port", "6379", "the port to connect to")
+	port := flag.String("port", shared.DefaultPort, "the port to connect to")
 	host := flag.String("host", "localhost", "the host to connect to")
 	flag.Parse()
 
@@ -53,6 +54,7 @@ func main() {
 			instruction := commands.NewInstruction(parts)
 			valid, errReason := instruction.Validate()
 			if valid {
+				// fmt.Println("Instruction is valid, sending to DB.")
 				// write the instruction
 				_, err = conn.Write(parser.BulkStringArraySerialize(parts))
 				if err != nil {
@@ -60,7 +62,12 @@ func main() {
 				}
 
 				// wait for and read response
-				response := <-instChannel
+				response, channelAlive := <-instChannel
+				if !channelAlive {
+					fmt.Println("Connection closed, exiting process...")
+					// TODO: make sure happens even if not awaiting a response from db
+					break
+				}
 				response.Print()
 			} else {
 				fmt.Printf("ERROR: %s Type 'HELP' to see a list of all valid commands and their use cases.\n", errReason)

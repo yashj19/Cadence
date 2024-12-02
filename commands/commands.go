@@ -35,7 +35,7 @@ PING
 INFO
 ECHO value
 GET key value
-SET key value [EX number]
+SET key value [PX number]
 PRINT - prints the contents of the entire db
 
 REPLSYNC
@@ -90,9 +90,9 @@ var cmdValidate = map[string]func(args []string) bool{
 		if len(args) < 2 {
 			return false
 		}
-		exIndex := slices.Index(args, "EX")
+		exIndex := slices.Index(args, "PX")
 
-		// if sent EX option, better be longer than 4 args and last two args should be: EX number
+		// if sent PX option, better be longer than 4 args and last two args should be: PX number
 		if exIndex == -1 {
 			return true
 		} else if len(args) >= 4 && exIndex == len(args)-2 {
@@ -177,7 +177,7 @@ type Instruction struct {
 }
 
 func (inst Instruction) Validate() (bool, string) {
-	validationFunc, exists := cmdValidate[inst.Command]
+	validationFunc, exists := cmdValidate[strings.ToUpper(inst.Command)]
 	if !exists {
 		return false, "Invalid command."
 	} else if !validationFunc(inst.Args) {
@@ -188,19 +188,23 @@ func (inst Instruction) Validate() (bool, string) {
 }
 
 func (inst Instruction) Run(conn net.Conn) {
+	fmt.Print("Running inst: ")
+	inst.Print()
 	valid, errorMsg := inst.Validate()
 	if !valid {
 		errorMsg = fmt.Sprintf("ERROR: %s", errorMsg)
 		fmt.Println(errorMsg)
 		shared.WriteToConn(conn, errorMsg)
 	} else {
-		executionFunc := cmdRun[inst.Command]
+		executionFunc := cmdRun[strings.ToUpper(inst.Command)]
 		executionFunc(conn, inst.Args)
 
 		// if need to propagate it, do that as well
 		if slices.Contains(commandsToPropagate, inst.Command) {
+			fmt.Println("Propagate command to any replicas.")
 			// iterate through all replicas, and propagate
-			for _, replica := range replicas {
+			for i, replica := range replicas {
+				fmt.Println("Propagating to replica #", i)
 				// write to connection, but if doesn't work retry (TODO)
 				replica.connection.Write(parser.BulkStringSerialize(inst.Command + " " + strings.Join(inst.Args, " ")))
 				/**
@@ -212,6 +216,8 @@ func (inst Instruction) Run(conn net.Conn) {
 
 		}
 	}
+
+	fmt.Println("Done.")
 }
 
 func (inst Instruction) Print() {
@@ -220,5 +226,13 @@ func (inst Instruction) Print() {
 
 // like constructor for instruction struct
 func NewInstruction(rawParts []string) Instruction {
-	return Instruction{Command: strings.ToUpper(rawParts[0]), Args: rawParts[1:]}
+	// TODO: make this durable so that can gracefully clean after 0 parts received
+	if len(rawParts) == 0 {
+		fmt.Println("HELL NAH, YOU EXPECTING ME TO CREATE AN INSTRUCTION WITH NOTHIN?!?")
+		// return Instruction{}, errors.New("No parts for instruction constructor passed.")
+	}
+
+	return Instruction{Command: rawParts[0], Args: rawParts[1:]}
 }
+
+// TODO: make a separate interface and make two things follow it - new instruction and response
