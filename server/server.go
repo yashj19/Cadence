@@ -110,10 +110,11 @@ func handleConnection(conn net.Conn, instChannel chan commands.Instruction) {
 
 // Features I want this DB to have (custom):
 // get, set, simple status check (wassup), info, and sync
-// replication master to node
+// replication master to node (NEED)
 // automatic fault tolerance
-// reads spread across all secondary/primary (load balancing)
+// reads spread across all secondary/primary (load balancing) (NEED)
 // horizontal sharding
-// make it LRU Cache
+// make it LRU Cache (NEED)
+// logging (NEED)
 // transactions?
 // support various types: strings, numbers, arrays, booleans, objects (nested) - want to know type so need to be normal maybe? --- LATER

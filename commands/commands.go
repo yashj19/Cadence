@@ -199,7 +199,13 @@ func (inst Instruction) Run(conn net.Conn) {
 		executionFunc := cmdRun[strings.ToUpper(inst.Command)]
 		executionFunc(conn, inst.Args)
 
-		// if need to propagate it, do that as well
+		// if need to propagate it, do a couple things:
+		// - propagate to replicas
+		// - increment your replica offset
+		// - append to log - should do this first regardless
+		// - only keep a log as long as the memory you would like to store - run compaction on it?
+		//  - perhaps, when you evict stuff from the thing, you append the evication to the log as well
+		// 					- and then you can run compaction on it
 		if slices.Contains(commandsToPropagate, inst.Command) {
 			fmt.Println("Propagate command to any replicas.")
 			// iterate through all replicas, and propagate
@@ -222,6 +228,14 @@ func (inst Instruction) Run(conn net.Conn) {
 
 func (inst Instruction) Print() {
 	fmt.Println(inst.Command + " " + strings.Join(inst.Args, " "))
+}
+
+func (inst Instruction) ToString() string {
+	ans := inst.Command
+	if len(inst.Args) > 0 {
+		ans += " " + strings.Join(inst.Args, " ")
+	}
+	return ans
 }
 
 // like constructor for instruction struct
