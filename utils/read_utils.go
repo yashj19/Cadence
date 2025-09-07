@@ -1,7 +1,6 @@
-package readutils
+package utils
 
 import (
-	"cadence/commands"
 	"fmt"
 	"io"
 	"net"
@@ -10,7 +9,9 @@ import (
 	"github.com/pkg/errors"
 )
 
-func readRawDataFromConnection(dataChannel chan<- string, conn net.Conn) {
+// type ConnData []string
+
+func readRawDataFromConnection(rawDataChannel chan<- string, conn net.Conn) {
 	buffer := make([]byte, 1024)
 	for {
 		// wait until a message comes in
@@ -25,13 +26,13 @@ func readRawDataFromConnection(dataChannel chan<- string, conn net.Conn) {
 				break
 			}
 		}
-		dataChannel <- string(buffer[:n])
+		rawDataChannel <- string(buffer[:n])
 	}
-	defer close(dataChannel) // close channel at end
+	defer close(rawDataChannel) // close channel at end
 }
 
-func interpretRecievedBytes(dataChannel <-chan string, instChannel chan<- commands.Instruction) {
-	defer close(instChannel)
+func interpretRecievedBytes[T any](rawDataChannel <-chan string, dataChannel chan<- T, dataCtor func([]string) T) {
+	defer close(dataChannel)
 	var data = ""
 	var i = 0
 	var channelDead = false
@@ -39,7 +40,7 @@ func interpretRecievedBytes(dataChannel <-chan string, instChannel chan<- comman
 		// fmt.Println("OH BOY I RAN")
 		for len(data) < i+n {
 			// fmt.Println("HELL NAH, NOT ENOUGH DATA")
-			newData, ok := <-dataChannel
+			newData, ok := <-rawDataChannel
 			// fmt.Println("I JUST GOT: ", newData, ok)
 			channelDead = !ok
 			if len(data) > i {
@@ -107,7 +108,7 @@ func interpretRecievedBytes(dataChannel <-chan string, instChannel chan<- comman
 				return
 			}
 			// fmt.Println("Simple string is:", temp)
-			instChannel <- commands.NewInstruction([]string{temp})
+			dataChannel <- dataCtor([]string{temp})
 		case '$':
 			// fmt.Println("Interpreting bulk string.")
 			length, err := lengthExtractor()
@@ -125,7 +126,7 @@ func interpretRecievedBytes(dataChannel <-chan string, instChannel chan<- comman
 				return
 			}
 			// fmt.Println("Bulk string is:", bulkString)
-			instChannel <- commands.NewInstruction([]string{bulkString})
+			dataChannel <- dataCtor([]string{bulkString})
 		case '*':
 			// fmt.Println("Interpreting bulk string array.")
 
@@ -155,19 +156,23 @@ func interpretRecievedBytes(dataChannel <-chan string, instChannel chan<- comman
 			}
 
 			// fmt.Println("Bulk string array is:", arr)
-			instChannel <- commands.NewInstruction(arr)
+			dataChannel <- dataCtor(arr)
 		default:
 			fmt.Println("I DONT KNOW WHAT KIND OF THING YOU GAVE ME :SOB:")
 			continue
 		}
 	}
-	// TODO: LATER VALIDATE BEFORE SENDING IN CHANNEL
 }
 
-func ReadFromConn(conn net.Conn) chan commands.Instruction {
-	dataChannel := make(chan string)
-	instChannel := make(chan commands.Instruction)
-	go readRawDataFromConnection(dataChannel, conn)
-	go interpretRecievedBytes(dataChannel, instChannel)
-	return instChannel
+func ReadFromConn[T any](conn net.Conn, dataCtor func([]string) T) chan T {
+	rawDataChannel := make(chan string)
+	dataChannel := make(chan T)
+	go readRawDataFromConnection(rawDataChannel, conn)
+	go interpretRecievedBytes(rawDataChannel, dataChannel, dataCtor)
+	return dataChannel
+}
+
+func WriteToConn(conn net.Conn, message string) error {
+	_, err := conn.Write(BulkStringSerialize(message))
+	return err
 }

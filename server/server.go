@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"flag"
@@ -6,24 +6,32 @@ import (
 	"net"
 	"os"
 
-	"cadence/commands"
-	readutils "cadence/read-utils"
-	"cadence/shared"
+	"cadence/constants"
+	"cadence/utils"
 
 	"github.com/pkg/errors"
 )
 
+type ServerBasicInfo struct {
+	IsReplica     bool
+	MasterAddress string // empty string if not replica
+	Port          string
+	CurrentOffset int
+}
+
+var ServerInfo = ServerBasicInfo{}
+
 func main() {
 
 	// get and parse flag for which port it is
-	port := flag.String("port", shared.DefaultPort, "the port at which to run the db")
+	port := flag.String("port", constants.DefaultPort, "the port at which to run the db")
 	replicaOf := flag.String("replicaof", "", "the host and port of master node that this is a replica of in the format host:port")
 	flag.Parse()
 
 	// TODO: do some validation of the flags
 
 	// set basic server info
-	shared.ServerInfo = shared.ServerBasicInfo{
+	ServerInfo = ServerBasicInfo{
 		IsReplica:     *replicaOf != "",
 		MasterAddress: *replicaOf,
 		Port:          *port,
@@ -43,10 +51,10 @@ func main() {
 	defer l.Close()
 
 	// if its a replica, first perform handshake with master
-	if shared.ServerInfo.IsReplica {
+	if ServerInfo.IsReplica {
 		masterConn, instChannel, err := handshakeMaster()
 		if err != nil {
-			fmt.Println("ERROR: handshake failed, ", err)
+			fmt.Println("ERROR: master handshake failed, ", err)
 			os.Exit(1)
 		}
 		go handleConnection(masterConn, instChannel)
@@ -59,38 +67,38 @@ func main() {
 			fmt.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
-		instChannel := readutils.ReadFromConn(c)
+		instChannel := utils.ReadFromConn(c, NewInstruction)
 		go handleConnection(c, instChannel)
 	}
 }
 
-func handshakeMaster() (net.Conn, chan commands.Instruction, error) {
-	fmt.Println("Commencing handshake with master, at remote address: ", shared.ServerInfo.MasterAddress)
+func handshakeMaster() (net.Conn, chan Instruction, error) {
+	fmt.Println("Commencing handshake with master, at remote address: ", ServerInfo.MasterAddress)
 
 	// first, create tcp connection with master and start accepting reads from it
-	conn, err := net.Dial("tcp", shared.ServerInfo.MasterAddress)
+	conn, err := net.Dial("tcp", ServerInfo.MasterAddress)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "error connecting to master")
 	}
-	instChannel := readutils.ReadFromConn(conn)
+	instChannel := utils.ReadFromConn(conn, NewInstruction)
 
 	// send PING and check if PONG received
-	err = shared.WriteToConn(conn, commands.Commands.STATUS)
+	err = utils.WriteToConn(conn, Commands.STATUS)
 	if err != nil {
 		return nil, nil, err
 	}
 	response := <-instChannel
-	if response.Command != commands.Responses.ALL_GOOD {
+	if response.Command != Responses.ALL_GOOD {
 		return nil, nil, errors.New("ERROR: master did not respond with a PONG")
 	}
 
 	// second, send the REPL_SYNC command to master and check if full sync received
-	err = shared.WriteToConn(conn, commands.Commands.REPLICA_SYNC)
+	err = utils.WriteToConn(conn, Commands.REPLICA_SYNC)
 	if err != nil {
 		return nil, nil, err
 	}
 	response = <-instChannel
-	if response.Command != commands.Commands.FULL_SYNC {
+	if response.Command != Commands.FULL_SYNC {
 		return nil, nil, errors.New("ERROR: master did not respond with a FULLSYNC")
 	}
 	// TODO - actually do stuff with the RDB file later
@@ -100,7 +108,7 @@ func handshakeMaster() (net.Conn, chan commands.Instruction, error) {
 	return conn, instChannel, nil
 }
 
-func handleConnection(conn net.Conn, instChannel chan commands.Instruction) {
+func handleConnection(conn net.Conn, instChannel chan Instruction) {
 	defer conn.Close()
 	fmt.Println("Client connected:", conn.RemoteAddr())
 	for inst := range instChannel {

@@ -1,4 +1,4 @@
-package commands
+package server
 
 import (
 	"fmt"
@@ -8,8 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"cadence/parser"
-	"cadence/shared"
+	"cadence/utils"
 )
 
 // create cache
@@ -28,6 +27,9 @@ type Replica struct {
 
 var replicas = []*Replica{}
 
+
+
+//TODO: each conn.Write can return error, handle it
 /*
 Commands supported:
 
@@ -43,8 +45,6 @@ FULLSYNC rdb_file - RDB file encoded as bulk string
 
 Note: anything in brackets means its optional.
 */
-
-//TODO: each conn.Write can return error, handle it
 
 // defined an explicit struct so the command names can easily be changed to make it more customizable
 var Commands = struct {
@@ -114,25 +114,25 @@ var cmdValidate = map[string]func(args []string) bool{
 // TODO: upon replica contact, save its host and port info (to try connecting again in the cdase of an error)
 var cmdRun = map[string]func(net.Conn, []string){
 	Commands.STATUS: func(conn net.Conn, args []string) {
-		conn.Write(parser.SimpleStringSerialize("PONG"))
+		conn.Write(utils.SimpleStringSerialize("PONG"))
 	},
 	Commands.INFO: func(conn net.Conn, args []string) {
-		if shared.ServerInfo.IsReplica {
-			conn.Write(parser.BulkStringSerialize("role:slave")) //\nmaster_replid:" + replID + "\nmaster_repl_offset:" + strconv.Itoa(repOffset) + "\n"))
+		if ServerInfo.IsReplica {
+			conn.Write(utils.BulkStringSerialize("role:slave")) //\nmaster_replid:" + replID + "\nmaster_repl_offset:" + strconv.Itoa(repOffset) + "\n"))
 		} else {
-			conn.Write(parser.BulkStringSerialize("role:master"))
+			conn.Write(utils.BulkStringSerialize("role:master"))
 		}
 	},
 	Commands.ECHO: func(conn net.Conn, args []string) {
-		conn.Write(parser.BulkStringSerialize(strings.Join(args, " ")))
+		conn.Write(utils.BulkStringSerialize(strings.Join(args, " ")))
 	},
 	Commands.GET: func(conn net.Conn, args []string) {
 		entry, exists := cache[args[0]]
 		if exists && (entry.expiryTime.IsZero() || time.Now().Before(entry.expiryTime)) {
-			conn.Write(parser.BulkStringSerialize(entry.value))
+			conn.Write(utils.BulkStringSerialize(entry.value))
 		} else {
 			delete(cache, args[0])
-			conn.Write(parser.NilBulkString())
+			conn.Write(utils.NilBulkString())
 		}
 	},
 	Commands.SET: func(conn net.Conn, args []string) {
@@ -144,30 +144,30 @@ var cmdRun = map[string]func(net.Conn, []string){
 			num, err := strconv.Atoi(args[3])
 			if err != nil {
 				// it fails, write back an error
-				conn.Write(parser.BulkStringSerialize("ERROR: An error occurred reading the expiry, please try again."))
+				conn.Write(utils.BulkStringSerialize("ERROR: An error occurred reading the expiry, please try again."))
 			}
 			cache[args[0]] = Entry{value: args[1], expiryTime: time.Now().Add(time.Duration(num) * time.Millisecond)}
 		}
 
-		if !shared.ServerInfo.IsReplica {
-			conn.Write(parser.SimpleStringSerialize("OK"))
+		if !ServerInfo.IsReplica {
+			conn.Write(utils.SimpleStringSerialize("OK"))
 		}
 	},
 	Commands.REPLICA_SYNC: func(conn net.Conn, args []string) {
 		// REPLICA handshake is going to only be simple handshake - replica sends ask to sync with port, master replies with RDB file (full resync)
 		host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 		if err != nil {
-			shared.WriteToConn(conn, "ERROR: could not add replica, try again")
+			utils.WriteToConn(conn, "ERROR: could not add replica, try again")
 		} else {
 			replicas = append(replicas, &Replica{host: host, port: port, connection: conn})
-			conn.Write(parser.BulkStringArraySerialize([]string{"FULLSYNC", "file"}))
+			conn.Write(utils.BulkStringArraySerialize([]string{"FULLSYNC", "file"}))
 		}
 	},
 	Commands.FULL_SYNC: func(conn net.Conn, args []string) {
 		// REPLICA handshake is going to only be simple handshake - replica sends ask to sync with port, master replies with RDB file
 		// get the port, do something with it (store it)
 		// return back full resync
-		conn.Write(parser.BulkStringArraySerialize([]string{"FULLSYNC", ""}))
+		conn.Write(utils.BulkStringArraySerialize([]string{"FULLSYNC", ""}))
 	},
 }
 
@@ -194,7 +194,7 @@ func (inst Instruction) Run(conn net.Conn) {
 	if !valid {
 		errorMsg = fmt.Sprintf("ERROR: %s", errorMsg)
 		fmt.Println(errorMsg)
-		shared.WriteToConn(conn, errorMsg)
+		utils.WriteToConn(conn, errorMsg)
 	} else {
 		executionFunc := cmdRun[strings.ToUpper(inst.Command)]
 		executionFunc(conn, inst.Args)
@@ -212,7 +212,7 @@ func (inst Instruction) Run(conn net.Conn) {
 			for i, replica := range replicas {
 				fmt.Println("Propagating to replica #", i)
 				// write to connection, but if doesn't work retry (TODO)
-				replica.connection.Write(parser.BulkStringSerialize(inst.Command + " " + strings.Join(inst.Args, " ")))
+				replica.connection.Write(utils.BulkStringSerialize(inst.Command + " " + strings.Join(inst.Args, " ")))
 				/**
 				TODO:
 				when make instruction better (e.g. args actually store type information), make instruction
@@ -243,6 +243,7 @@ func NewInstruction(rawParts []string) Instruction {
 	// TODO: make this durable so that can gracefully clean after 0 parts received
 	if len(rawParts) == 0 {
 		fmt.Println("HELL NAH, YOU EXPECTING ME TO CREATE AN INSTRUCTION WITH NOTHIN?!?")
+		return Instruction{}
 		// return Instruction{}, errors.New("No parts for instruction constructor passed.")
 	}
 
