@@ -7,12 +7,14 @@ import (
 	"os"
 
 	"cadence/constants"
+	"cadence/lru"
 	"cadence/utils"
 
 	"github.com/pkg/errors"
 )
 
 var ServerInfo = ServerBasicInfo{}
+var cache = lru.ShardedLRU{}
 
 func main() {
 
@@ -42,6 +44,10 @@ func main() {
 
 	// close binding after function exits
 	defer l.Close()
+
+	// instantiate cache
+	cache = lru.NewShardedLRU(constants.CAPACITY_PER_SHARD, constants.SHARD_COUNT)
+	defer cache.Cleanup()
 
 	// if its a replica, first perform handshake with master
 	if ServerInfo.IsReplica {

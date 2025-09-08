@@ -5,18 +5,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"cadence/utils"
 )
-
-// create cache
-type Entry struct {
-	value      string
-	expiryTime time.Time
-}
-
-var cache = make(map[string]Entry)
 
 type Replica struct {
 	host       string
@@ -25,8 +16,6 @@ type Replica struct {
 }
 
 var replicas = []*Replica{}
-
-
 
 //TODO: each conn.Write can return error, handle it
 /*
@@ -121,11 +110,10 @@ var cmdMap = map[string]CommandInfo{
 	Commands.GET: {
 		DocString: "Get the value of a key",
 		Execute: func(args []string, conn net.Conn) []byte {
-			entry, exists := cache[args[0]]
-			if exists && (entry.expiryTime.IsZero() || time.Now().Before(entry.expiryTime)) {
-				return utils.BulkStringSerialize(entry.value)
+			value, exists := cache.Get(args[0])
+			if exists {
+				return utils.BulkStringSerialize(value)
 			}
-			delete(cache, args[0])
 			return utils.NilBulkString()
 		},
 		Validate: func(args []string) bool {
@@ -138,14 +126,14 @@ var cmdMap = map[string]CommandInfo{
 			var n = len(args)
 
 			if n < 4 || strings.ToUpper(args[len(args)-2]) != "PX" {
-				cache[args[0]] = Entry{value: args[1]}
+				cache.Set(args[0], args[1], -1)
 			} else {
-				num, err := strconv.Atoi(args[3])
+				duration, err := strconv.Atoi(args[3])
 				if err != nil {
 					// it fails, write back an error
 					return utils.BulkStringSerialize("ERROR: An error occurred reading the expiry, please try again.")
 				}
-				cache[args[0]] = Entry{value: args[1], expiryTime: time.Now().Add(time.Duration(num) * time.Millisecond)}
+				cache.Set(args[0], args[1], duration)
 			}
 
 			if !ServerInfo.IsReplica {
@@ -168,6 +156,19 @@ var cmdMap = map[string]CommandInfo{
 			} else {
 				return false
 			}
+		},
+	},
+	Commands.DELETE: {
+		DocString: "Delete entry from cache",
+		Execute: func(args []string, conn net.Conn) []byte {
+			cache.Delete(args[0])
+			if !ServerInfo.IsReplica {
+				return utils.SimpleStringSerialize(Responses.OKAY)
+			}
+			return nil
+		},
+		Validate: func(args []string) bool {
+			return len(args) == 1
 		},
 	},
 	Commands.REPLICA_SYNC: {
