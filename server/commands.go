@@ -2,6 +2,7 @@ package server
 
 import (
 	"net"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -180,7 +181,11 @@ var cmdMap = map[string]CommandInfo{
 				return utils.BulkStringArraySerialize([]string{"ERROR: could not add replica, try again"})
 			} else {
 				replicas = append(replicas, &Replica{host: host, port: port, connection: conn})
-				return utils.BulkStringArraySerialize([]string{"FULLSYNC", "file"})
+				data, err := os.ReadFile("snapshot.txt")
+				if err != nil {
+					return utils.BulkStringArraySerialize([]string{"ERROR: could not add replica, try again"})
+				}
+				return utils.BulkStringArraySerialize([]string{"FULLSYNC", string(data)}) // TODO: make this more efficient
 			}
 		},
 		Validate: func(args []string) bool {

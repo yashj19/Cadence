@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"time"
 
 	"cadence/constants"
 	"cadence/lru"
@@ -48,6 +49,22 @@ func main() {
 	// instantiate cache
 	cache = lru.NewShardedLRU(constants.CAPACITY_PER_SHARD, constants.SHARD_COUNT)
 	defer cache.Cleanup()
+
+	// start a go routine to do snapshot every 5 minutes
+	t := time.NewTicker(constants.SNAPSHOT_INTERVAL)
+	snapshotStop := make(chan struct{})
+    go func() {
+        defer t.Stop()
+        for {
+            select {
+            case <-t.C:
+				cache.Snapshot("snapshot")
+            case <-snapshotStop:
+                return
+            }
+        }
+    }()
+	defer close(snapshotStop)
 
 	// if its a replica, first perform handshake with master
 	if ServerInfo.IsReplica {

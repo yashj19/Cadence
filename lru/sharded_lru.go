@@ -1,5 +1,12 @@
 package lru
 
+import (
+	"bufio"
+	"cadence/utils"
+	"fmt"
+	"os"
+)
+
 type ShardedLRU struct {
 	shards []*LRUCache
 }
@@ -31,6 +38,29 @@ func (slru *ShardedLRU) Set(key string, value string, duration int) {
 
 func (slru *ShardedLRU) Delete(key string) {
 	slru.getLRU(key).Delete(key)
+}
+
+func (slru *ShardedLRU) Snapshot(filename string) {
+	f, err := os.OpenFile(filename+".txt", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		panic("ERROR: error writing to snapshot file")
+		// TODO: handle this later
+	}
+		defer f.Close()
+
+
+	// use 64KB buffered writer
+	bw := bufio.NewWriterSize(f, 64<<10) 
+	for _, shard := range slru.shards {
+		for k, entry := range shard.cache {
+			if _, err := bw.Write(utils.BulkStringArraySerialize([]string{k, entry.value})); err != nil {
+				panic("ERROR: died while writing")
+			}
+		}
+	}
+	if err := bw.Flush(); err != nil {
+		fmt.Println("ERROR: couldn't flush buffer at end properly.")
+	}
 }
 
 func (slru *ShardedLRU) Cleanup() {
