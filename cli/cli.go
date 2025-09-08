@@ -22,12 +22,12 @@ func main() {
 
 	// connect to server
 	conn, err := net.Dial("tcp", *host+":"+*port)
-	defer conn.Close()
 	if err != nil {
 		fmt.Println("Could not connect to instance, exiting process...")
 		return
 	}
-	dataChannel := utils.ReadFromConn(conn, func(r []string) []string { return r })
+	defer conn.Close()
+	dataChannel := utils.ReadFromConn(conn, server.NewResponse)
 
 	fmt.Println("Connected successfully! Enter commands:")
 
@@ -69,11 +69,7 @@ func main() {
 				fmt.Println("Connection closed, exiting process...")
 				break
 			}
-			if len(response) == 1 {
-				fmt.Println(response[0])
-			} else {
-				fmt.Println("ERROR: invalid response recieved, try again.")
-			}
+			fmt.Println(response)
 		}
 	}
 }

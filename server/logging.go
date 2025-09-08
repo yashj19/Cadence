@@ -36,7 +36,7 @@ package server
 // 	}
 // 	defer file.Close()
 
-// 	_, err = file.WriteString(inst.ToString())
+// 	_, err = file.WriteString(inst.String())
 // 	return err
 // }
 

@@ -12,13 +12,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-type ServerBasicInfo struct {
-	IsReplica     bool
-	MasterAddress string // empty string if not replica
-	Port          string
-	CurrentOffset int
-}
-
 var ServerInfo = ServerBasicInfo{}
 
 func main() {
@@ -72,6 +65,7 @@ func main() {
 	}
 }
 
+// expects a "RESPONSE" once and then an "INSTRUCTION"
 func handshakeMaster() (net.Conn, chan Instruction, error) {
 	fmt.Println("Commencing handshake with master, at remote address: ", ServerInfo.MasterAddress)
 
@@ -108,6 +102,7 @@ func handshakeMaster() (net.Conn, chan Instruction, error) {
 	return conn, instChannel, nil
 }
 
+// expects ONLY INSTRUCTIONS
 func handleConnection(conn net.Conn, instChannel chan Instruction) {
 	defer conn.Close()
 	fmt.Println("Client connected:", conn.RemoteAddr())
