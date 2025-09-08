@@ -23,7 +23,7 @@ type Instruction struct {
 	Args    []string
 }
 
-func (inst Instruction) Validate() (bool, string) {
+func (inst *Instruction) Validate() (bool, string) {
 	commandInfo, exists := cmdMap[strings.ToUpper(inst.Command)]
 	if !exists {
 		return false, "Invalid command."
@@ -34,7 +34,7 @@ func (inst Instruction) Validate() (bool, string) {
 	}
 }
 
-func (inst Instruction) Run(conn net.Conn) {
+func (inst *Instruction) Run(conn net.Conn) {
 	fmt.Print("Running inst: ")
 	inst.Print()
 	valid, errorMsg := inst.Validate()
@@ -73,11 +73,11 @@ func (inst Instruction) Run(conn net.Conn) {
 	fmt.Println("Done.")
 }
 
-func (inst Instruction) Print() {
+func (inst *Instruction) Print() {
 	fmt.Println(inst.Command + " " + strings.Join(inst.Args, " "))
 }
 
-func (inst Instruction) String() string {
+func (inst *Instruction) String() string {
 	ans := inst.Command
 	if len(inst.Args) > 0 {
 		ans += " " + strings.Join(inst.Args, " ")
@@ -85,7 +85,7 @@ func (inst Instruction) String() string {
 	return ans
 }
 
-func (inst Instruction) Serialize() []byte {
+func (inst *Instruction) Serialize() []byte {
 	return utils.BulkStringArraySerialize(append([]string{inst.Command}, inst.Args...))
 }
 
