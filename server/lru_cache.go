@@ -1,6 +1,8 @@
 package server
 
 import (
+	"math"
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -9,104 +11,142 @@ import (
 type Entry struct {
 	value      string
 	expiryTime time.Time
+	index int
+	accessTime int
 }
 
-// node struct for linked list
-type Node struct {
-	key string
-	entry Entry
-	next *Node
-	prev *Node
-}
+// Approximate LRU Cache -------------------------------------------------------------------------
+const SAMPLE_SIZE = 32
+const WORKER_INTERVALS = 5 * time.Second
 
-// LRU Cache -------------------------------------------------------------------------
 type LRUCache struct {
-	cache map[string] *Node
+	cache map[string] Entry
 	capacity int
-	head *Node
-	tail *Node
-	cacheMutex sync.RWMutex
-	listMutex sync.Mutex
+	keys []string
+	clock int
+	stopJob chan struct{}
+	rng *rand.Rand
+	mutex sync.Mutex
 }
 
-func NewLRUCache(capacity int) LRUCache {
+func NewLRUCache(capacity int) *LRUCache {
 	if capacity <= 0 {
 		panic("LRU Cache capacity must be greater than 0.")
 	}
 
-	// init linked list ends (head followed by tail)
-	head := &Node{}
-	tail := &Node{"", Entry{}, nil, head}
-	head.next = tail
-
-	return LRUCache{cache: make(map[string]*Node), capacity: capacity, head: head, tail: tail}
-}
-
-func (lru *LRUCache) removeNode(node *Node) {
-	// locking list
-	lru.listMutex.Lock()
-	defer lru.listMutex.Unlock()
-
-	next, prev := node.next, node.prev
-
-	// cannot operate on head or tail
-	if next == nil || prev == nil {
-		panic("cannot remove head or tail on LRU Cache linked list.")
+	lru := LRUCache{
+		cache: make(map[string]Entry), 
+		capacity: capacity, 
+		keys: []string{}, 
+		clock: 0,
+		stopJob: make(chan struct{}),
+		rng: rand.New(rand.NewSource(time.Now().UnixNano())), // TODO: maybe use a seed?
 	}
 
-	// set prev's next to next and next's prev to prev
-	prev.next = next
-	next.prev = prev
+	lru.startJanitor()
 
-	node.next = nil
-	node.prev = nil
+	return &lru
 }
 
-func (lru *LRUCache) appendTail(node *Node) {
-	// locking list
-	lru.listMutex.Lock()
-	defer lru.listMutex.Unlock()
-
-	prev := lru.tail.prev
-
-	// add node
-	lru.tail.prev = node
-	prev.next = node
-
-	// fix node
-	node.next = lru.tail
-	node.prev = prev
-}
-
-func (lru *LRUCache) Get(key string) (string, bool) {
-	// read lock cache
-	lru.cacheMutex.RLock()
-	
-	// fetch node
-	node, exists := lru.cache[key]
+// private methods -------------
+func (lru *LRUCache) deleteEntry(key string) {
+	entry, exists := lru.cache[key]
 	if exists {
-		if node.entry.expiryTime.IsZero() || time.Now().Before(node.entry.expiryTime) {
-			// move this node to end of the list, read the val
-			lru.removeNode(node)
-			lru.appendTail(node)
-			returnVal := node.entry.value
+		delete(lru.cache, key)
+		
+		// swap key index with last index and pop
+		lastInd := len(lru.keys) - 1
+		lru.keys[entry.index], lru.keys[lastInd] = lru.keys[lastInd], lru.keys[entry.index]
+		lru.keys = lru.keys[:lastInd]
 
-			// remove lock
-			lru.cacheMutex.RUnlock()
+		// update swapped keys entry
+		swappedKey := lru.keys[entry.index]
+		swappedEntry := lru.cache[swappedKey]
+		swappedEntry.index = entry.index
+		lru.cache[swappedKey] = swappedEntry
+	}
+}
 
-			return returnVal, true
+func (lru *LRUCache) getClock() int {
+	// each clock access increments clock - mod clock by int max
+	if lru.clock == math.MaxInt {
+		lru.clock = 0
+	} else {
+		lru.clock += 1
+	}
+	return lru.clock
+}
+
+func (lru *LRUCache) sampleEviction() {
+	// this will AT LEAST do one deletion if over capacity, but won't guarantee anymore
+	// randomly sample up to SAMPLE_SIZE keys, drop expired ones, keep track of oldest access time key
+	cacheSize := len(lru.keys)
+	oldest := ""
+	oldestTime := lru.clock
+
+	for i := 0; i < min(cacheSize, SAMPLE_SIZE); i++ {
+		// draw
+		key := lru.keys[lru.rng.Intn(len(lru.keys))]
+		entry, exists := lru.cache[key]
+
+		if !exists {
+			panic("messed up sample eviction logic somewhere.")
+		}
+
+		// if expired, kick
+		if !entry.expiryTime.IsZero() && !time.Now().Before(entry.expiryTime) {
+			lru.deleteEntry(key)
+			continue
+		}
+		
+		// if older than all not kicked, set - maybe bad to do here to actually keep approximate LRU (idk)
+		if (lru.clock - entry.accessTime)%math.MaxInt > (lru.clock - oldestTime)%math.MaxInt {
+			oldest, oldestTime = key, entry.accessTime
+		}
+	}
+
+	if len(lru.keys) > lru.capacity {
+		lru.deleteEntry(oldest)
+	}
+}
+
+func (lru *LRUCache) startJanitor() {
+	// start background worker
+    t := time.NewTicker(WORKER_INTERVALS)
+    go func() {
+        defer t.Stop()
+        for {
+            select {
+            case <-t.C:
+				lru.mutex.Lock()
+				for len(lru.keys) > lru.capacity {
+					lru.sampleEviction()
+				}
+				lru.mutex.Unlock()
+            case <-lru.stopJob:
+                return
+            }
+        }
+    }()
+}
+
+// public methods -------------
+func (lru *LRUCache) Get(key string) (string, bool) {
+	// set lock
+	lru.mutex.Lock()
+	defer lru.mutex.Unlock()
+
+	// retrieve entry
+	entry, exists := lru.cache[key]
+	if exists {
+		if entry.expiryTime.IsZero() || time.Now().Before(entry.expiryTime) {
+			// make more recent
+			entry.accessTime = lru.getClock()
+			lru.cache[key] = entry
+
+			return entry.value, true
 		} else {
-			// remove the lock
-			lru.cacheMutex.RUnlock()
-
-			// lazy deletion - remove it
-			lru.removeNode(node)
-
-			// write lock cache during deletion
-			lru.cacheMutex.Lock()
-			delete(lru.cache, key)
-			lru.cacheMutex.Unlock()
-
+			lru.deleteEntry(key)
 			return "", false
 		}
 	}
@@ -114,45 +154,55 @@ func (lru *LRUCache) Get(key string) (string, bool) {
 }
 
 func (lru *LRUCache) Set(key string, value string, duration int) {
-	// lock cache for read
-	lru.cacheMutex.RLock()
-	node, exists := lru.cache[key]
-	lru.cacheMutex.RUnlock()
+	// set lock
+	lru.mutex.Lock()
+	defer lru.mutex.Unlock()
+
+	entry, exists := lru.cache[key]
 
 	// create new/updated entry - if duration negative, count as infinite
+	// set index later (depends on if exists or not)
 	var newEntry Entry
 	if duration >= 0 {
-		newEntry = Entry{value: value, expiryTime: time.Now().Add(time.Duration(duration) * time.Millisecond)}
+		newEntry = Entry{
+			value: value,
+			expiryTime: time.Now().Add(time.Duration(duration) * time.Millisecond),
+			accessTime: lru.getClock(),			
+		}
 	} else {
-		newEntry = Entry{value: value, expiryTime: time.Time{}}
+		newEntry = Entry{
+			value: value,
+			expiryTime: time.Time{},
+			accessTime: lru.getClock(),
+		}
 	}
 
 	if exists {
-		// move to end and update entry
-		lru.removeNode(node)
-		lru.appendTail(node)
-
-		lru.cacheMutex.Lock()
-		node.entry = newEntry
-		lru.cacheMutex.Unlock()
+		// just update entry
+		newEntry.index = entry.index
+		lru.cache[key] = newEntry
 	} else {
-		// create new node, add to cache and list
-		node = &Node{key: key, entry: newEntry}
+		// set entry index, add key to keys, add entry
+		newEntry.index = len(lru.keys)
+		lru.keys = append(lru.keys, key)
+		lru.cache[key] = newEntry
 
-		lru.cacheMutex.Lock()
-		lru.cache[key] = node
-		lru.capacity += 1
-		lru.cacheMutex.Unlock()
-
-		lru.appendTail(node)
-
-		// if exceeding capacity, remove head
-		lru.cacheMutex.Lock()
-		if len(lru.cache) > lru.capacity {
-			delete(lru.cache, lru.head.next.key)
-			lru.removeNode(lru.head.next)
-			lru.capacity -= 1
+		// if exceeding capacity, perform sample removal
+		if len(lru.keys) > lru.capacity {
+			lru.sampleEviction()
 		}
-		lru.cacheMutex.Unlock()
 	}
+}
+
+func (lru *LRUCache) Delete(key string) {
+	// set lock
+	lru.mutex.Lock()
+	defer lru.mutex.Unlock()
+
+	// delete key
+	lru.deleteEntry(key)
+}
+
+func (lru *LRUCache) Cleanup() {
+	close(lru.stopJob)
 }
